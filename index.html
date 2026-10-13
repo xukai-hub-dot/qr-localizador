@@ -1,0 +1,1839 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR GeoTracker - Localizador de Códigos QR</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- QRCode.js Library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Estilos personalizados para Leaflet */
+    .leaflet-popup-content-wrapper {
+      border-radius: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+    }
+    .custom-pulsing-marker {
+      position: relative;
+    }
+    .pulse-ring {
+      border: 3px solid #2563eb;
+      border-radius: 50%;
+      height: 40px;
+      width: 40px;
+      position: absolute;
+      left: -10px;
+      top: -10px;
+      animation: pulsate 1.8s ease-out infinite;
+      opacity: 0;
+    }
+    @keyframes pulsate {
+      0% { transform: scale(0.1, 0.1); opacity: 0; }
+      50% { opacity: 0.8; }
+      100% { transform: scale(1.4, 1.4); opacity: 0; }
+    }
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #printArea, #printArea * {
+        visibility: visible;
+      }
+      #printArea {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans antialiased selection:bg-blue-500 selection:text-white">
+
+  <!-- ========================================== -->
+  <!-- VISTA DE CLIENTE (AL ESCANEAR EL CÓDIGO QR) -->
+  <!-- ========================================== -->
+  <div id="scanModeView" class="hidden min-h-screen flex-col items-center justify-center p-4 bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 text-white">
+    <div class="max-w-md w-full bg-slate-900/80 backdrop-blur-xl border border-slate-700/80 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden text-center">
+      
+      <!-- Efecto de luz superior -->
+      <div class="absolute -top-24 left-1/2 -translate-x-1/2 w-48 h-48 bg-blue-500/20 rounded-full blur-3xl pointer-events-none"></div>
+
+      <!-- Icono y estado de escaneo -->
+      <div id="scanStatusIcon" class="w-20 h-20 mx-auto mb-5 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 text-3xl shadow-lg transition-all duration-300">
+        <i class="fa-solid fa-qrcode animate-pulse"></i>
+      </div>
+
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs font-semibold uppercase tracking-wider mb-3">
+        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+        <span id="scanQrBadge">Código QR Identificado</span>
+      </div>
+
+      <h1 id="scanStatusTitle" class="text-2xl font-bold text-white mb-2">Registrando Ubicación...</h1>
+      <p id="scanStatusMsg" class="text-slate-400 text-sm mb-6">Por favor concede permiso de ubicación en tu navegador para registrar este lugar con precisión.</p>
+
+      <!-- Botón de acción para solicitar ubicación si el navegador lo requiere -->
+      <div id="scanActionBtnContainer" class="mb-6 hidden">
+        <button id="btnGrantLocation" onclick="requestScanLocation()" class="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold text-sm shadow-lg shadow-blue-600/30 active:scale-95 transition-all flex items-center justify-center gap-2">
+          <i class="fa-solid fa-location-crosshairs text-base"></i>
+          Permitir mi Ubicación
+        </button>
+      </div>
+
+      <!-- Spinner animado de carga -->
+      <div id="scanLoadingSpinner" class="flex justify-center items-center py-4">
+        <div class="relative w-12 h-12">
+          <div class="w-12 h-12 rounded-full border-4 border-blue-500/20 border-t-blue-500 animate-spin"></div>
+        </div>
+      </div>
+
+      <!-- Tarjeta con resultado una vez obtenido -->
+      <div id="scanResultCard" class="hidden text-left bg-slate-800/80 border border-slate-700 rounded-2xl p-4 mb-6 space-y-3">
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-lg flex-shrink-0 mt-0.5">
+            <i class="fa-solid fa-location-dot"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <div class="text-xs text-slate-400 font-medium">Lugar / Dirección detectada:</div>
+            <div id="scanResultAddress" class="text-sm font-semibold text-white break-words mt-0.5">Obteniendo dirección...</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-slate-700/60 text-xs">
+          <div>
+            <span class="text-slate-400">Coordenadas:</span>
+            <div id="scanResultCoords" class="font-mono text-blue-300 font-medium">--</div>
+          </div>
+          <div>
+            <span class="text-slate-400">Precisión GPS:</span>
+            <div id="scanResultAccuracy" class="text-emerald-300 font-medium">--</div>
+          </div>
+          <div>
+            <span class="text-slate-400">Fecha y Hora:</span>
+            <div id="scanResultTime" class="text-slate-200">--</div>
+          </div>
+          <div>
+            <span class="text-slate-400">Dispositivo:</span>
+            <div id="scanResultDevice" class="text-slate-200 truncate">--</div>
+          </div>
+        </div>
+
+        <!-- Mini mapa interactivo embebido -->
+        <div id="scanMiniMap" class="w-full h-44 rounded-xl border border-slate-700 overflow-hidden mt-3 z-0"></div>
+
+        <!-- Botones de navegación externa -->
+        <div class="grid grid-cols-2 gap-2 pt-2">
+          <a id="btnGoogleMaps" href="#" target="_blank" class="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs text-white font-medium transition">
+            <i class="fa-brands fa-google text-red-400"></i> Google Maps
+          </a>
+          <a id="btnWaze" href="#" target="_blank" class="flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-xs text-white font-medium transition">
+            <i class="fa-brands fa-waze text-cyan-400"></i> Abrir en Waze
+          </a>
+        </div>
+      </div>
+
+      <!-- Enlace para volver o ir al panel -->
+      <div class="text-xs text-slate-500 pt-2">
+        <a href="?" class="text-blue-400 hover:text-blue-300 underline">Ir al Panel de Administración y Generador</a>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ========================================== -->
+  <!-- VISTA DE ADMINISTRACIÓN Y PANEL DE CONTROL  -->
+  <!-- ========================================== -->
+  <div id="adminModeView" class="flex-1 flex flex-col">
+    <!-- Barra Superior -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        
+        <!-- Logo -->
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white text-lg shadow-md shadow-blue-500/20">
+            <i class="fa-solid fa-location-crosshairs"></i>
+          </div>
+          <div>
+            <h1 class="text-base sm:text-lg font-bold text-slate-900 leading-tight">QR GeoTracker</h1>
+            <p class="text-xs text-slate-500">Localizador de Escaneos QR en Tiempo Real</p>
+          </div>
+        </div>
+
+        <!-- Conexión y Accesos directos -->
+        <div class="flex items-center gap-2 sm:gap-4">
+          <div id="githubPagesBadge" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200">
+            <i class="fa-brands fa-github text-sm"></i>
+            <span>GitHub Pages (HTTPS)</span>
+          </div>
+
+          <div id="serverConnectionBadge" class="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Servidor Activo</span>
+          </div>
+
+          <!-- Botón de Simular Escaneo -->
+          <button onclick="testQuickScan()" class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 text-xs font-semibold transition active:scale-95 shadow-sm">
+            <i class="fa-solid fa-vial"></i>
+            <span class="hidden sm:inline">Probar Escaneo Aquí</span>
+            <span class="sm:hidden">Probar</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Barra de Pestañas de Navegación -->
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-1 sm:space-x-8 overflow-x-auto border-t border-slate-100 text-sm font-medium">
+        <button onclick="switchTab('mapTab')" id="tabBtn-mapTab" class="nav-tab active-tab py-3 px-3 sm:px-1 border-b-2 border-blue-600 text-blue-600 flex items-center gap-2 whitespace-nowrap">
+          <i class="fa-solid fa-map-location-dot"></i>
+          Mapa en Vivo
+        </button>
+        <button onclick="switchTab('generatorTab')" id="tabBtn-generatorTab" class="nav-tab py-3 px-3 sm:px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center gap-2 whitespace-nowrap">
+          <i class="fa-solid fa-qrcode"></i>
+          Generador de Códigos QR
+        </button>
+        <button onclick="switchTab('historyTab')" id="tabBtn-historyTab" class="nav-tab py-3 px-3 sm:px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center gap-2 whitespace-nowrap">
+          <i class="fa-solid fa-table-list"></i>
+          Historial (<span id="tabCountBadge">0</span>)
+        </button>
+        <button onclick="switchTab('alertsTab')" id="tabBtn-alertsTab" class="nav-tab py-3 px-3 sm:px-1 border-b-2 border-transparent text-slate-500 hover:text-slate-700 flex items-center gap-2 whitespace-nowrap">
+          <i class="fa-solid fa-bell"></i>
+          Alertas & Webhooks
+        </button>
+      </div>
+    </header>
+
+    <!-- Contenido Principal -->
+    <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+      <!-- Tarjetas de Métricas Rápidas -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center text-xl flex-shrink-0">
+            <i class="fa-solid fa-qrcode"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-500 font-medium">Total de Escaneos</div>
+            <div id="statTotalScans" class="text-xl sm:text-2xl font-bold text-slate-900">0</div>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl flex-shrink-0">
+            <i class="fa-solid fa-calendar-day"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-500 font-medium">Escaneos Hoy</div>
+            <div id="statTodayScans" class="text-xl sm:text-2xl font-bold text-slate-900">0</div>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-xl flex-shrink-0">
+            <i class="fa-solid fa-crosshairs"></i>
+          </div>
+          <div>
+            <div class="text-xs text-slate-500 font-medium">Precisión Media</div>
+            <div id="statAvgAccuracy" class="text-xl sm:text-2xl font-bold text-slate-900">--</div>
+          </div>
+        </div>
+
+        <div class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
+          <div class="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-xl flex-shrink-0">
+            <i class="fa-solid fa-clock-rotate-left"></i>
+          </div>
+          <div class="min-w-0">
+            <div class="text-xs text-slate-500 font-medium">Último Escaneo</div>
+            <div id="statLastScanTime" class="text-sm font-semibold text-slate-900 truncate">Ninguno aún</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================== -->
+      <!-- PESTAÑA 1: MAPA GLOBAL EN VIVO                 -->
+      <!-- ============================================== -->
+      <section id="mapTab" class="tab-content space-y-4">
+        <div class="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm">
+          
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <i class="fa-solid fa-earth-americas text-blue-600"></i>
+                Mapa Global de Ubicaciones Escaneadas
+              </h2>
+              <p class="text-xs text-slate-500">Muestra la ubicación geográfica exacta de cada dispositivo que escaneó tu código QR.</p>
+            </div>
+
+            <!-- Filtro rápido por QR -->
+            <div class="flex items-center gap-2">
+              <label class="text-xs font-medium text-slate-600">Filtrar QR:</label>
+              <select id="filterQrMap" onchange="renderGlobalMap()" class="text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 bg-slate-50 focus:ring-2 focus:ring-blue-500">
+                <option value="ALL">Todos los códigos QR</option>
+              </select>
+              <button onclick="centerMapOnAllMarkers()" title="Ver todos" class="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs">
+                <i class="fa-solid fa-expand"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Contenedor del Mapa Leaflet -->
+          <div class="relative w-full h-[520px] rounded-xl overflow-hidden border border-slate-200 shadow-inner">
+            <div id="adminGlobalMap" class="w-full h-full z-0"></div>
+
+            <!-- Caja flotante de último escaneo sobre el mapa -->
+            <div id="floatingLastScan" class="absolute bottom-4 left-4 z-[400] max-w-sm bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl p-3 shadow-xl hidden">
+              <div class="flex items-center gap-2 text-xs font-semibold text-blue-600 mb-1">
+                <span class="w-2 h-2 rounded-full bg-blue-600 animate-ping"></span>
+                <span>Último escaneo registrado</span>
+              </div>
+              <div id="floatingLastAddress" class="text-xs font-medium text-slate-800 line-clamp-2">--</div>
+              <div class="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-500">
+                <span id="floatingLastTime">--</span>
+                <span id="floatingLastAccuracy" class="font-mono text-emerald-600">--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Leyenda del Mapa -->
+          <div class="flex flex-wrap items-center gap-4 pt-3 text-xs text-slate-500">
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-blue-600 inline-block"></span> GPS Móvil de Alta Precisión (< 20m)</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span> Precisión Media (20m - 100m)</span>
+            <span class="flex items-center gap-1.5"><span class="w-3 h-3 rounded-full bg-slate-400 inline-block"></span> Geolocalización por Red / IP</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- PESTAÑA 2: GENERADOR DE CÓDIGOS QR             -->
+      <!-- ============================================== -->
+      <section id="generatorTab" class="tab-content hidden space-y-6">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          <!-- Formulario de Configuración del QR -->
+          <div class="lg:col-span-7 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-5">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <i class="fa-solid fa-sliders text-blue-600"></i>
+                Diseñar & Configurar Código QR
+              </h2>
+              <p class="text-xs text-slate-500">Crea códigos QR personalizados para colocar en mesas, letreros, vehículos, paquetes o folletos.</p>
+            </div>
+
+            <!-- Identificador / Etiqueta del QR -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                Nombre / Identificador del QR
+              </label>
+              <div class="relative">
+                <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <i class="fa-solid fa-tag"></i>
+                </div>
+                <input type="text" id="qrLabelInput" value="Punto-Control-01" oninput="updateQrCode()" class="w-full pl-10 pr-4 py-2.5 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50" placeholder="Ej: Mesa-05, Vehiculo-A, Sucursal-Centro">
+              </div>
+              <p class="text-[11px] text-slate-400 mt-1">Este ID aparecerá en tu mapa para que sepas qué código QR fue el que escanearon.</p>
+            </div>
+
+            <!-- URL Base de Destino -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                  Enlace de Destino (URL del Localizador)
+                </label>
+                <button type="button" onclick="autoDetectUrl()" class="text-xs text-blue-600 hover:text-blue-700 font-medium">
+                  <i class="fa-solid fa-arrows-rotate"></i> Detectar URL actual
+                </button>
+              </div>
+              <div class="relative">
+                <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <i class="fa-solid fa-link"></i>
+                </div>
+                <input type="text" id="qrBaseUrlInput" oninput="updateQrCode()" class="w-full pl-10 pr-4 py-2.5 text-sm font-mono border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50" placeholder="http://192.168.1.50:8080 o https://tudominio.com">
+              </div>
+              
+              <!-- Alerta informativa sobre HTTPS y móviles -->
+              <div class="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex items-start gap-2">
+                <i class="fa-solid fa-triangle-exclamation text-amber-600 mt-0.5"></i>
+                <div>
+                  <strong>Requisito de GPS Móvil:</strong> Los celulares (iOS Safari y Android Chrome) exigen <code class="bg-amber-100 px-1 py-0.5 rounded font-mono">HTTPS</code> para compartir coordenadas GPS precisas. Si estás probando en tu red local o internet, puedes usar un túnel gratuito como <strong>Cloudflare Tunnel</strong> o <strong>ngrok</strong>, o desplegar esta página gratis en Vercel/GitHub Pages. Si se escanea por HTTP, usará automáticamente geolocalización por IP.
+                </div>
+              </div>
+            </div>
+
+            <!-- Mensaje Personalizado que verá el usuario al escanear -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                Mensaje de Bienvenida al Escanear
+              </label>
+              <input type="text" id="qrCustomMsgInput" value="¡Gracias por escanear este punto de control!" oninput="updateQrCode()" class="w-full px-4 py-2 text-sm border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+            </div>
+
+            <!-- Opciones de Color y Estilo -->
+            <div class="grid grid-cols-2 gap-4 pt-2">
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">Color de Código QR</label>
+                <div class="flex items-center gap-2">
+                  <input type="color" id="qrColorDark" value="#0f172a" onchange="updateQrCode()" class="w-10 h-10 rounded-lg border border-slate-300 cursor-pointer p-0.5 bg-white">
+                  <span id="qrColorDarkHex" class="text-xs font-mono text-slate-500">#0f172a</span>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-slate-600 mb-1">Color de Fondo</label>
+                <div class="flex items-center gap-2">
+                  <input type="color" id="qrColorLight" value="#ffffff" onchange="updateQrCode()" class="w-10 h-10 rounded-lg border border-slate-300 cursor-pointer p-0.5 bg-white">
+                  <span id="qrColorLightHex" class="text-xs font-mono text-slate-500">#ffffff</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- URL Completa Resultante (Lectura) -->
+            <div class="pt-2">
+              <label class="block text-xs text-slate-500 mb-1">Enlace codificado dentro del QR:</label>
+              <div class="flex items-center gap-2">
+                <input type="text" id="qrFullUrlDisplay" readonly class="w-full text-xs font-mono bg-slate-100 text-slate-600 border border-slate-200 rounded-lg px-3 py-2 select-all">
+                <button type="button" onclick="copyQrUrl()" class="px-3 py-2 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium flex items-center gap-1">
+                  <i class="fa-solid fa-copy"></i>
+                  <span>Copiar</span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Vista Previa & Descarga del QR -->
+          <div class="lg:col-span-5 flex flex-col">
+            <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex-1 flex flex-col items-center justify-between text-center">
+              
+              <div class="w-full">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Vista Previa para Impresión</div>
+                <h3 id="previewQrTitle" class="text-base font-bold text-slate-800">Punto-Control-01</h3>
+              </div>
+
+              <!-- Tarjeta Imprimible / Visible -->
+              <div id="printArea" class="my-6 p-6 bg-white border-2 border-dashed border-slate-300 rounded-2xl shadow-sm inline-flex flex-col items-center text-center max-w-[280px]">
+                <div class="text-xs font-bold text-blue-600 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                  <i class="fa-solid fa-location-dot"></i>
+                  <span>ESCANEA AQUÍ</span>
+                </div>
+                
+                <!-- Lienzo QR Real -->
+                <div id="qrCodeContainer" class="p-3 bg-white rounded-xl shadow-inner border border-slate-100 flex items-center justify-center"></div>
+
+                <div id="printCardLabel" class="text-xs font-bold text-slate-800 mt-3">Punto-Control-01</div>
+                <div class="text-[10px] text-slate-400 mt-0.5">Abre con la cámara de tu celular</div>
+              </div>
+
+              <!-- Botones de Acción / Descarga -->
+              <div class="w-full space-y-2 pt-2">
+                <button onclick="downloadQrImage()" class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-md shadow-blue-500/20 flex items-center justify-center gap-2 active:scale-95 transition">
+                  <i class="fa-solid fa-download"></i>
+                  Descargar Imagen del QR (PNG)
+                </button>
+                <div class="grid grid-cols-2 gap-2">
+                  <button onclick="printQrCard()" class="py-2 px-3 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 font-medium text-xs flex items-center justify-center gap-1.5 transition">
+                    <i class="fa-solid fa-print"></i>
+                    Imprimir Cartel
+                  </button>
+                  <a id="btnTestQrLink" href="#" target="_blank" class="py-2 px-3 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 font-medium text-xs flex items-center justify-center gap-1.5 transition">
+                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    Abrir Enlace
+                  </a>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- PESTAÑA 3: HISTORIAL DETALLADO DE ESCANEOS     -->
+      <!-- ============================================== -->
+      <section id="historyTab" class="tab-content hidden space-y-4">
+        <div class="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+          
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <i class="fa-solid fa-clipboard-list text-blue-600"></i>
+                Registro Detallado de Escaneos
+              </h2>
+              <p class="text-xs text-slate-500">Historial completo con coordenadas, direcciones, precisión y dispositivos.</p>
+            </div>
+
+            <!-- Acciones de Exportación & Limpieza -->
+            <div class="flex items-center gap-2 flex-wrap">
+              <button onclick="exportToCsv()" class="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+                <i class="fa-solid fa-file-csv text-emerald-600"></i>
+                Exportar CSV
+              </button>
+              <button onclick="exportToJson()" class="px-3 py-1.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+                <i class="fa-solid fa-file-code text-blue-600"></i>
+                Exportar JSON
+              </button>
+              <button onclick="clearHistoryConfirm()" class="px-3 py-1.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-semibold flex items-center gap-1.5 shadow-sm">
+                <i class="fa-solid fa-trash-can"></i>
+                Borrar Historial
+              </button>
+            </div>
+          </div>
+
+          <!-- Filtro de Búsqueda -->
+          <div class="flex flex-col sm:flex-row gap-3 items-center">
+            <div class="relative flex-1 w-full">
+              <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <i class="fa-solid fa-magnifying-glass text-xs"></i>
+              </div>
+              <input type="text" id="historySearchInput" oninput="filterHistoryTable()" placeholder="Buscar por dirección, QR ID, ciudad o coordenadas..." class="w-full pl-9 pr-4 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+            </div>
+            <select id="historyFilterSelect" onchange="filterHistoryTable()" class="text-xs border border-slate-300 rounded-xl px-3 py-2 bg-slate-50/50 w-full sm:w-auto">
+              <option value="ALL">Todos los códigos</option>
+            </select>
+          </div>
+
+          <!-- Tabla de Datos -->
+          <div class="overflow-x-auto rounded-xl border border-slate-200">
+            <table class="w-full text-left text-xs text-slate-600">
+              <thead class="bg-slate-50 text-slate-700 uppercase font-semibold border-b border-slate-200 text-[10px] tracking-wider">
+                <tr>
+                  <th class="py-3 px-4">Fecha y Hora</th>
+                  <th class="py-3 px-4">Código QR ID</th>
+                  <th class="py-3 px-4">Ubicación / Dirección</th>
+                  <th class="py-3 px-4">Coordenadas</th>
+                  <th class="py-3 px-4">Precisión</th>
+                  <th class="py-3 px-4">Dispositivo</th>
+                  <th class="py-3 px-4 text-right">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody" class="divide-y divide-slate-100">
+                <!-- Se llena dinámicamente con JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Paginación o estado vacío -->
+          <div id="historyEmptyState" class="py-12 text-center text-slate-400 hidden">
+            <i class="fa-solid fa-map-location text-3xl mb-2 text-slate-300"></i>
+            <div class="text-sm font-medium">Aún no hay escaneos registrados</div>
+            <p class="text-xs text-slate-400 mt-1">Genera un código QR o presiona "Probar Escaneo Aquí" para registrar el primero.</p>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ============================================== -->
+      <!-- PESTAÑA 4: ALERTAS EN TIEMPO REAL & WEBHOOKS   -->
+      <!-- ============================================== -->
+      <section id="alertsTab" class="tab-content hidden space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          <!-- Webhook Discord -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg">
+                <i class="fa-brands fa-discord"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Notificaciones Discord</h3>
+                <p class="text-xs text-slate-500">Recibe una tarjeta con mapa y dirección en tu canal al escanear.</p>
+              </div>
+            </div>
+
+            <div class="space-y-3 pt-2">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">URL de Webhook de Discord</label>
+                <input type="url" id="discordWebhookInput" placeholder="https://discord.com/api/webhooks/..." class="w-full text-xs font-mono px-3 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+              </div>
+
+              <div class="flex items-center gap-2">
+                <input type="checkbox" id="discordEnabledCheck" class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500">
+                <label for="discordEnabledCheck" class="text-xs text-slate-700 font-medium">Activar envío a Discord al escanear</label>
+              </div>
+
+              <div class="flex gap-2 pt-2">
+                <button onclick="saveAllSettings()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition">
+                  Guardar
+                </button>
+                <button onclick="testWebhookNotification()" class="px-3 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition">
+                  Probar Discord
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Telegram Bot -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center text-lg">
+                <i class="fa-brands fa-telegram"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Notificaciones Telegram</h3>
+                <p class="text-xs text-slate-500">Recibe un mensaje en tu Telegram privado o grupo cuando escaneen.</p>
+              </div>
+            </div>
+
+            <div class="space-y-3 pt-2">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Bot Token</label>
+                <input type="text" id="telegramTokenInput" placeholder="123456789:ABCdefGHIjkl..." class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Chat ID</label>
+                <input type="text" id="telegramChatIdInput" placeholder="Ej: 987654321" class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+              </div>
+
+              <div class="flex items-center gap-2">
+                <input type="checkbox" id="telegramEnabledCheck" class="w-4 h-4 rounded text-blue-600 border-slate-300 focus:ring-blue-500">
+                <label for="telegramEnabledCheck" class="text-xs text-slate-700 font-medium">Activar envío a Telegram al escanear</label>
+              </div>
+
+              <div class="flex gap-2 pt-2">
+                <button onclick="saveAllSettings()" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold transition">
+                  Guardar
+                </button>
+                <button onclick="testTelegramNotification()" class="px-3 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition">
+                  Probar Telegram
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Base de Datos en la Nube (Supabase) - Ideal para GitHub Pages -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg">
+                <i class="fa-solid fa-cloud"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Sincronización en la Nube (GitHub Pages)</h3>
+                <p class="text-xs text-slate-500">Conecta Supabase gratuito para que los escaneos móviles se reflejen en tu PC en vivo.</p>
+              </div>
+            </div>
+
+            <div class="space-y-3 pt-2">
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Supabase Project URL</label>
+                <input type="url" id="supabaseUrlInput" placeholder="https://tu-proyecto.supabase.co" class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Supabase Anon Key</label>
+                <input type="password" id="supabaseKeyInput" placeholder="eyJhbGciOiJIUzI1NiIsInR5c..." class="w-full text-xs font-mono px-3 py-2 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 bg-slate-50/50">
+              </div>
+
+              <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-600 space-y-1">
+                <div class="font-semibold text-slate-800">💡 ¿Por qué es útil en GitHub Pages?</div>
+                <div>GitHub Pages no tiene backend propio. Conectar una base de datos gratuita permite que cualquier celular que escanee guarde sus datos en tu panel en tiempo real.</div>
+              </div>
+
+              <div class="flex gap-2 pt-1">
+                <button onclick="saveAllSettings()" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition">
+                  Guardar Supabase
+                </button>
+                <button onclick="showSupabaseSqlHelper()" class="px-3 py-2 rounded-xl border border-slate-300 hover:bg-slate-50 text-slate-700 text-xs font-medium transition">
+                  Ver SQL de Tabla
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Alertas Sonoras y Auto-Refresco -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg">
+                <i class="fa-solid fa-volume-high"></i>
+              </div>
+              <div>
+                <h3 class="text-base font-bold text-slate-900">Sonido y Actualización en Vivo</h3>
+                <p class="text-xs text-slate-500">Monitoreo continuo para ver escaneos al instante mientras tienes abierto el panel.</p>
+              </div>
+            </div>
+
+            <div class="space-y-4 pt-2">
+              <div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <div class="text-xs font-semibold text-slate-800">Alerta Sonora en Panel</div>
+                  <div class="text-[11px] text-slate-500">Reproduce un timbre musical cuando entra un nuevo escaneo</div>
+                </div>
+                <input type="checkbox" id="soundAlertEnabled" checked class="w-5 h-5 rounded text-blue-600">
+              </div>
+
+              <div class="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div>
+                  <div class="text-xs font-semibold text-slate-800">Auto-Refrescar Historial</div>
+                  <div class="text-[11px] text-slate-500">Sincroniza cada 5 segundos</div>
+                </div>
+                <input type="checkbox" id="autoRefreshEnabled" checked class="w-5 h-5 rounded text-blue-600">
+              </div>
+
+              <button onclick="playNotificationChime()" class="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1.5">
+                <i class="fa-solid fa-play"></i> Probar sonido de notificación
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Pie de Página -->
+    <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400">
+      QR GeoTracker &bull; Localizador de Códigos QR con Geolocalización GPS e Inversa
+    </footer>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL PARA VER UBICACIÓN INDIVIDUAL EN MAPA    -->
+  <!-- ============================================== -->
+  <div id="singleMapModal" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-200 animate-in fade-in zoom-in duration-200">
+      <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+        <div>
+          <h3 id="modalScanTitle" class="text-sm font-bold text-slate-800">Ubicación de Escaneo</h3>
+          <p id="modalScanSubtitle" class="text-xs text-slate-500">--</p>
+        </div>
+        <button onclick="closeSingleMapModal()" class="w-8 h-8 rounded-lg hover:bg-slate-100 text-slate-500 flex items-center justify-center">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="p-4 space-y-3">
+        <div id="modalMapContainer" class="w-full h-80 rounded-xl overflow-hidden border border-slate-200"></div>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+            <span class="text-slate-400">Dirección completa:</span>
+            <div id="modalAddressText" class="font-medium text-slate-800 mt-0.5">--</div>
+          </div>
+          <div class="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+            <span class="text-slate-400">Coordenadas y Precisión:</span>
+            <div id="modalCoordsText" class="font-mono text-blue-600 mt-0.5">--</div>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <a id="modalGoogleMapsLink" href="#" target="_blank" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5">
+            <i class="fa-brands fa-google"></i> Abrir en Google Maps
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ============================================== -->
+  <!-- LÓGICA DE JAVASCRIPT                           -->
+  <!-- ============================================== -->
+  <script>
+    // --- ESTADO GLOBAL ---
+    const STORAGE_KEY = 'qr_geotracker_scans_v1';
+    const SETTINGS_KEY = 'qr_geotracker_settings_v1';
+    
+    let scansData = [];
+    let globalMap = null;
+    let globalMarkersLayer = null;
+    let modalMap = null;
+    let miniScanMap = null;
+    let qrInstance = null;
+    let autoRefreshTimer = null;
+    let lastScanCount = 0;
+
+    // --- DETECCIÓN DE MODO AL INICIAR ---
+    document.addEventListener('DOMContentLoaded', () => {
+      // Activar insignia de GitHub Pages / HTTPS si corresponde
+      if (window.location.hostname.includes('github.io') || window.location.protocol === 'https:') {
+        const ghBadge = document.getElementById('githubPagesBadge');
+        if (ghBadge) ghBadge.classList.remove('hidden');
+      }
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const isScanMode = urlParams.get('scan') === 'true' || urlParams.has('qr_id') && !urlParams.has('admin');
+
+      if (isScanMode) {
+        initScanModeView(urlParams);
+      } else {
+        initAdminModeView();
+      }
+    });
+
+    // ========================================================
+    // SECCIÓN 1: LÓGICA DEL MODO ESCANEO (DISPOSITIVO CLIENTE)
+    // ========================================================
+    function initScanModeView(params) {
+      document.getElementById('adminModeView').classList.add('hidden');
+      document.getElementById('scanModeView').classList.remove('hidden');
+      document.getElementById('scanModeView').classList.add('flex');
+
+      const qrId = params.get('qr_id') || 'QR-GENERAL';
+      const customMsg = params.get('msg') || 'Punto de control verificado';
+
+      document.getElementById('scanQrBadge').innerText = `ID: ${qrId}`;
+      document.getElementById('scanStatusMsg').innerText = customMsg + '. Solicitando tu ubicación geográfica...';
+
+      // Disparar solicitud de ubicación
+      requestScanLocation(qrId, customMsg);
+    }
+
+    function requestScanLocation(qrId, customMsg) {
+      const qrIdentifier = qrId || (new URLSearchParams(window.location.search).get('qr_id') || 'QR-GENERAL');
+      const actionBtn = document.getElementById('scanActionBtnContainer');
+      const spinner = document.getElementById('scanLoadingSpinner');
+      const statusTitle = document.getElementById('scanStatusTitle');
+      const statusMsg = document.getElementById('scanStatusMsg');
+
+      actionBtn.classList.add('hidden');
+      spinner.classList.remove('hidden');
+      statusTitle.innerText = 'Detectando Ubicación...';
+
+      if (!navigator.geolocation) {
+        fallbackIpLocation(qrIdentifier, 'Tu navegador no soporta GPS nativo. Usando localización por red IP.');
+        return;
+      }
+
+      const options = {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 0
+      };
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          handleLocationSuccess(position.coords, 'GPS', qrIdentifier);
+        },
+        (error) => {
+          console.warn('Error obteniendo GPS:', error.message);
+          let errorText = 'Permiso de GPS no concedido o tiempo agotado. Obteniendo ubicación aproximada por red...';
+          fallbackIpLocation(qrIdentifier, errorText);
+        },
+        options
+      );
+    }
+
+    // Geolocalización de respaldo por IP si el usuario niega GPS o usa HTTP
+    async function fallbackIpLocation(qrId, reasonMsg) {
+      document.getElementById('scanStatusMsg').innerText = reasonMsg;
+      
+      try {
+        // Consultar API de geolocalización IP pública gratuita
+        const response = await fetch('https://ipapi.co/json/');
+        const data = await response.json();
+
+        if (data && data.latitude && data.longitude) {
+          const fakeCoords = {
+            latitude: data.latitude,
+            longitude: data.longitude,
+            accuracy: 3500, // Precisión estimada en metros para IP
+            isIpFallback: true,
+            city: data.city,
+            region: data.region,
+            country: data.country_name,
+            ip: data.ip
+          };
+          handleLocationSuccess(fakeCoords, 'IP_NETWORK', qrId);
+        } else {
+          throw new Error('Sin datos de IP');
+        }
+      } catch (err) {
+        document.getElementById('scanLoadingSpinner').classList.add('hidden');
+        document.getElementById('scanStatusTitle').innerText = 'No se pudo obtener ubicación';
+        document.getElementById('scanStatusMsg').innerText = 'Asegúrate de permitir el acceso a tu ubicación y tener conexión a internet.';
+        document.getElementById('scanActionBtnContainer').classList.remove('hidden');
+      }
+    }
+
+    // Procesar coordenadas válidas (GPS o IP)
+    async function handleLocationSuccess(coords, source, qrId) {
+      const lat = coords.latitude;
+      const lon = coords.longitude;
+      const accuracy = Math.round(coords.accuracy || 15);
+      const timestamp = new Date().toISOString();
+
+      document.getElementById('scanLoadingSpinner').classList.add('hidden');
+      document.getElementById('scanStatusTitle').innerText = '¡Ubicación Registrada!';
+      document.getElementById('scanStatusMsg').innerText = 'La ubicación exacta de este escaneo ha sido capturada con éxito.';
+
+      const iconBox = document.getElementById('scanStatusIcon');
+      iconBox.className = 'w-20 h-20 mx-auto mb-5 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-3xl shadow-lg';
+      iconBox.innerHTML = '<i class="fa-solid fa-check"></i>';
+
+      // Obtener dirección legible mediante Nominatim (Reverse Geocoding)
+      let addressString = coords.isIpFallback ? `${coords.city || ''}, ${coords.region || ''}, ${coords.country || ''}` : 'Consultando dirección...';
+      
+      try {
+        const nomRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`, {
+          headers: { 'Accept-Language': 'es' }
+        });
+        const nomData = await nomRes.json();
+        if (nomData && nomData.display_name) {
+          addressString = nomData.display_name;
+        }
+      } catch (e) {
+        console.warn('Nominatim no respondió:', e);
+        if (!coords.isIpFallback) {
+          addressString = `Lat: ${lat.toFixed(5)}, Lng: ${lon.toFixed(5)}`;
+        }
+      }
+
+      // Información del dispositivo cliente
+      const userAgent = navigator.userAgent;
+      const deviceInfo = parseDeviceInfo(userAgent);
+
+      // Objeto completo del escaneo
+      const scanRecord = {
+        id: 'scan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        qrId: qrId,
+        timestamp: timestamp,
+        latitude: lat,
+        longitude: lon,
+        accuracy: accuracy,
+        accuracyType: source,
+        address: addressString,
+        device: deviceInfo,
+        userAgent: userAgent
+      };
+
+      // Guardar en el backend si está activo o en localStorage
+      saveScanRecord(scanRecord);
+
+      // Disparar Webhook si está configurado
+      dispatchWebhookIfConfigured(scanRecord);
+
+      // Mostrar datos en pantalla del cliente
+      document.getElementById('scanResultCard').classList.remove('hidden');
+      document.getElementById('scanResultAddress').innerText = addressString;
+      document.getElementById('scanResultCoords').innerText = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+      document.getElementById('scanResultAccuracy').innerText = source === 'GPS' ? `± ${accuracy} metros (GPS)` : `Aprox. (Red/IP)`;
+      document.getElementById('scanResultTime').innerText = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      document.getElementById('scanResultDevice').innerText = `${deviceInfo.os} - ${deviceInfo.browser}`;
+
+      // Configurar botones externos
+      document.getElementById('btnGoogleMaps').href = `https://www.google.com/maps?q=${lat},${lon}`;
+      document.getElementById('btnWaze').href = `https://waze.com/ul?ll=${lat},${lon}&navigate=yes`;
+
+      // Renderizar mini mapa del cliente
+      renderClientMiniMap(lat, lon, accuracy);
+    }
+
+    function renderClientMiniMap(lat, lon, accuracy) {
+      if (miniScanMap) {
+        miniScanMap.remove();
+      }
+      miniScanMap = L.map('scanMiniMap', { zoomControl: false }).setView([lat, lon], 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap'
+      }).addTo(miniScanMap);
+
+      // Círculo de precisión
+      L.circle([lat, lon], {
+        radius: accuracy,
+        color: '#2563eb',
+        fillColor: '#3b82f6',
+        fillOpacity: 0.2,
+        weight: 1.5
+      }).addTo(miniScanMap);
+
+      // Marcador central
+      L.marker([lat, lon]).addTo(miniScanMap)
+        .bindPopup('<b>Ubicación del escaneo</b>')
+        .openPopup();
+    }
+
+
+    // ========================================================
+    // SECCIÓN 2: LÓGICA DEL PANEL DE ADMINISTRACIÓN
+    // ========================================================
+    async function initAdminModeView() {
+      loadSettings();
+      await loadScansData();
+      initGlobalMap();
+      renderGlobalMap();
+      updateStats();
+      renderHistoryTable();
+      initQrGenerator();
+      populateQrFilters();
+
+      // Iniciar temporizador de refresco en vivo
+      startAutoRefresh();
+    }
+
+    // Cargar datos desde Supabase, Backend o LocalStorage
+    async function loadScansData() {
+      // 1. Probar Supabase si está configurado (vital para GitHub Pages)
+      try {
+        const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        if (s.supabaseUrl && s.supabaseKey) {
+          const cleanUrl = s.supabaseUrl.replace(/\/+$/, '');
+          const res = await fetch(`${cleanUrl}/rest/v1/scans?select=*&order=timestamp.desc&limit=500`, {
+            headers: {
+              'apikey': s.supabaseKey,
+              'Authorization': `Bearer ${s.supabaseKey}`
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            scansData = data.map(item => ({
+              id: item.id,
+              qrId: item.qr_id || item.qrId,
+              timestamp: item.timestamp,
+              latitude: Number(item.latitude),
+              longitude: Number(item.longitude),
+              accuracy: Number(item.accuracy),
+              accuracyType: item.accuracy_type || item.accuracyType || 'GPS',
+              address: item.address,
+              device: typeof item.device === 'string' ? JSON.parse(item.device) : (item.device || {}),
+              userAgent: item.user_agent || item.userAgent
+            }));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(scansData));
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Error conectando a Supabase:', err);
+      }
+
+      // 2. Probar Backend local si está activo
+      try {
+        const response = await fetch('/api/scans', { cache: 'no-store' });
+        if (response.ok) {
+          const json = await response.json();
+          scansData = Array.isArray(json) ? json : (json.scans || []);
+          document.getElementById('serverConnectionBadge').classList.remove('hidden');
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(scansData));
+          return;
+        }
+      } catch (e) {}
+
+      // 3. Respaldo LocalStorage
+      const local = localStorage.getItem(STORAGE_KEY);
+      scansData = local ? JSON.parse(local) : [];
+    }
+
+    // Guardar nuevo registro
+    async function saveScanRecord(record) {
+      // 1. Guardar en localStorage
+      try {
+        let current = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        current.unshift(record);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
+      } catch (err) {
+        console.error('Error guardando en localStorage:', err);
+      }
+
+      // 2. Guardar en Supabase si está configurado (vital para GitHub Pages)
+      try {
+        const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        if (s.supabaseUrl && s.supabaseKey) {
+          const cleanUrl = s.supabaseUrl.replace(/\/+$/, '');
+          await fetch(`${cleanUrl}/rest/v1/scans`, {
+            method: 'POST',
+            headers: {
+              'apikey': s.supabaseKey,
+              'Authorization': `Bearer ${s.supabaseKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify({
+              id: record.id,
+              qr_id: record.qrId,
+              timestamp: record.timestamp,
+              latitude: record.latitude,
+              longitude: record.longitude,
+              accuracy: record.accuracy,
+              accuracy_type: record.accuracyType,
+              address: record.address,
+              device: record.device,
+              user_agent: record.userAgent
+            })
+          });
+        }
+      } catch (err) {
+        console.warn('Error enviando a Supabase:', err);
+      }
+
+      // 3. Intentar guardar en backend API local
+      try {
+        await fetch('/api/scans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(record)
+        });
+      } catch (err) {}
+    }
+
+    // Inicializar mapa global Leaflet
+    function initGlobalMap() {
+      if (globalMap) return;
+      
+      globalMap = L.map('adminGlobalMap').setView([-34.6037, -58.3816], 12); // Coordenadas iniciales
+
+      // Capa base de mapas
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a>'
+      }).addTo(globalMap);
+
+      globalMarkersLayer = L.layerGroup().addTo(globalMap);
+    }
+
+    // Renderizar pines en el mapa
+    function renderGlobalMap() {
+      if (!globalMap || !globalMarkersLayer) return;
+
+      globalMarkersLayer.clearLayers();
+      const filter = document.getElementById('filterQrMap').value;
+
+      const filtered = filter === 'ALL' ? scansData : scansData.filter(s => s.qrId === filter);
+      const latLngs = [];
+
+      filtered.forEach((scan, index) => {
+        const isRecent = index === 0;
+        const color = scan.accuracyType === 'GPS' ? (scan.accuracy < 30 ? '#2563eb' : '#f59e0b') : '#94a3b8';
+
+        // Marcador circular personalizado
+        const marker = L.circleMarker([scan.latitude, scan.longitude], {
+          radius: isRecent ? 10 : 7,
+          fillColor: color,
+          color: '#ffffff',
+          weight: 2,
+          opacity: 1,
+          fillOpacity: 0.9
+        });
+
+        // Popup con datos ricos
+        const dateStr = new Date(scan.timestamp).toLocaleString();
+        const popupContent = `
+          <div class="p-2 space-y-1.5 min-w-[200px] text-xs font-sans">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-1">
+              <span class="font-bold text-blue-600">${escapeHtml(scan.qrId || 'QR')}</span>
+              <span class="text-[10px] text-slate-400">${dateStr}</span>
+            </div>
+            <div class="font-semibold text-slate-800 text-[11px] leading-snug">${escapeHtml(scan.address || 'Ubicación')}</div>
+            <div class="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+              <span>Precisión: <b>±${scan.accuracy || 0}m (${scan.accuracyType || 'GPS'})</b></span>
+              <span>${scan.device ? escapeHtml(scan.device.os) : ''}</span>
+            </div>
+            <div class="pt-2 flex gap-1">
+              <a href="https://www.google.com/maps?q=${scan.latitude},${scan.longitude}" target="_blank" class="block text-center w-full py-1 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded font-semibold text-[10px]">
+                Abrir en Google Maps &rarr;
+              </a>
+            </div>
+          </div>
+        `;
+
+        marker.bindPopup(popupContent);
+        globalMarkersLayer.addLayer(marker);
+        latLngs.push([scan.latitude, scan.longitude]);
+      });
+
+      if (latLngs.length > 0) {
+        globalMap.fitBounds(latLngs, { padding: [50, 50], maxZoom: 16 });
+      }
+
+      // Actualizar tarjeta flotante de último escaneo
+      if (scansData.length > 0) {
+        const last = scansData[0];
+        document.getElementById('floatingLastScan').classList.remove('hidden');
+        document.getElementById('floatingLastAddress').innerText = last.address || `Lat: ${last.latitude.toFixed(4)}, Lng: ${last.longitude.toFixed(4)}`;
+        document.getElementById('floatingLastTime').innerText = new Date(last.timestamp).toLocaleString();
+        document.getElementById('floatingLastAccuracy').innerText = `±${last.accuracy}m (${last.accuracyType})`;
+      } else {
+        document.getElementById('floatingLastScan').classList.add('hidden');
+      }
+    }
+
+    function centerMapOnAllMarkers() {
+      if (!globalMap || scansData.length === 0) return;
+      const latLngs = scansData.map(s => [s.latitude, s.longitude]);
+      globalMap.fitBounds(latLngs, { padding: [50, 50], maxZoom: 16 });
+    }
+
+    // Actualizar métricas del dashboard
+    function updateStats() {
+      const total = scansData.length;
+      document.getElementById('statTotalScans').innerText = total;
+      document.getElementById('tabCountBadge').innerText = total;
+
+      // Escaneos hoy
+      const todayStr = new Date().toDateString();
+      const todayCount = scansData.filter(s => new Date(s.timestamp).toDateString() === todayStr).length;
+      document.getElementById('statTodayScans').innerText = todayCount;
+
+      // Precisión promedio
+      if (total > 0) {
+        const sumAcc = scansData.reduce((acc, cur) => acc + (cur.accuracy || 20), 0);
+        const avg = Math.round(sumAcc / total);
+        document.getElementById('statAvgAccuracy').innerText = `± ${avg} m`;
+      } else {
+        document.getElementById('statAvgAccuracy').innerText = '--';
+      }
+
+      // Último escaneo
+      if (total > 0) {
+        const last = scansData[0];
+        document.getElementById('statLastScanTime').innerText = new Date(last.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (' + (last.qrId || 'QR') + ')';
+      } else {
+        document.getElementById('statLastScanTime').innerText = 'Ninguno aún';
+      }
+    }
+
+    // Renderizar tabla de historial
+    function renderHistoryTable() {
+      const tbody = document.getElementById('historyTableBody');
+      const emptyState = document.getElementById('historyEmptyState');
+      const search = (document.getElementById('historySearchInput').value || '').toLowerCase();
+      const filter = document.getElementById('historyFilterSelect').value;
+
+      let list = scansData;
+
+      if (filter !== 'ALL') {
+        list = list.filter(s => s.qrId === filter);
+      }
+
+      if (search) {
+        list = list.filter(s => 
+          (s.address && s.address.toLowerCase().includes(search)) ||
+          (s.qrId && s.qrId.toLowerCase().includes(search)) ||
+          (`${s.latitude},${s.longitude}`.includes(search))
+        );
+      }
+
+      tbody.innerHTML = '';
+
+      if (list.length === 0) {
+        emptyState.classList.remove('hidden');
+        return;
+      }
+
+      emptyState.classList.add('hidden');
+
+      list.forEach((scan) => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50 transition border-b border-slate-100';
+
+        const dateStr = new Date(scan.timestamp).toLocaleString();
+        const accBadge = scan.accuracyType === 'GPS' 
+          ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800">GPS (±${scan.accuracy}m)</span>`
+          : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-700">Red/IP</span>`;
+
+        tr.innerHTML = `
+          <td class="py-3 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">${dateStr}</td>
+          <td class="py-3 px-4 font-bold text-blue-600 whitespace-nowrap">${escapeHtml(scan.qrId || 'QR')}</td>
+          <td class="py-3 px-4 max-w-xs font-medium text-slate-800 break-words">${escapeHtml(scan.address || '--')}</td>
+          <td class="py-3 px-4 font-mono text-[11px] text-slate-600 whitespace-nowrap">${scan.latitude.toFixed(5)}, ${scan.longitude.toFixed(5)}</td>
+          <td class="py-3 px-4 whitespace-nowrap">${accBadge}</td>
+          <td class="py-3 px-4 text-slate-500 text-[11px] whitespace-nowrap">${scan.device ? `${escapeHtml(scan.device.os)} (${escapeHtml(scan.device.browser)})` : '--'}</td>
+          <td class="py-3 px-4 text-right whitespace-nowrap space-x-1">
+            <button onclick="openScanModal('${scan.id}')" title="Ver en Mapa" class="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 transition">
+              <i class="fa-solid fa-map-location-dot"></i>
+            </button>
+            <a href="https://www.google.com/maps?q=${scan.latitude},${scan.longitude}" target="_blank" title="Google Maps" class="p-1.5 rounded-lg text-slate-600 hover:bg-slate-100 transition inline-block">
+              <i class="fa-solid fa-arrow-up-right-from-square"></i>
+            </a>
+            <button onclick="deleteSingleScan('${scan.id}')" title="Eliminar" class="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition">
+              <i class="fa-solid fa-trash-can"></i>
+            </button>
+          </td>
+        `;
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function filterHistoryTable() {
+      renderHistoryTable();
+    }
+
+    function populateQrFilters() {
+      const qrs = [...new Set(scansData.map(s => s.qrId).filter(Boolean))];
+      
+      const filterMap = document.getElementById('filterQrMap');
+      const filterHistory = document.getElementById('historyFilterSelect');
+
+      filterMap.innerHTML = '<option value="ALL">Todos los códigos QR</option>';
+      filterHistory.innerHTML = '<option value="ALL">Todos los códigos</option>';
+
+      qrs.forEach(qr => {
+        const opt1 = document.createElement('option');
+        opt1.value = qr;
+        opt1.innerText = qr;
+        filterMap.appendChild(opt1);
+
+        const opt2 = document.createElement('option');
+        opt2.value = qr;
+        opt2.innerText = qr;
+        filterHistory.appendChild(opt2);
+      });
+    }
+
+    // ========================================================
+    // SECCIÓN 3: GENERADOR DE CÓDIGO QR
+    // ========================================================
+    function initQrGenerator() {
+      autoDetectUrl();
+      updateQrCode();
+    }
+
+    function autoDetectUrl() {
+      const origin = window.location.origin;
+      const pathname = window.location.pathname;
+      document.getElementById('qrBaseUrlInput').value = `${origin}${pathname}`;
+      updateQrCode();
+    }
+
+    function updateQrCode() {
+      const label = document.getElementById('qrLabelInput').value.trim() || 'Punto-01';
+      const baseUrl = document.getElementById('qrBaseUrlInput').value.trim();
+      const customMsg = document.getElementById('qrCustomMsgInput').value.trim();
+      const colorDark = document.getElementById('qrColorDark').value;
+      const colorLight = document.getElementById('qrColorLight').value;
+
+      document.getElementById('qrColorDarkHex').innerText = colorDark;
+      document.getElementById('qrColorLightHex').innerText = colorLight;
+      document.getElementById('previewQrTitle').innerText = label;
+      document.getElementById('printCardLabel').innerText = label;
+
+      // Construir URL con parámetros
+      const url = new URL(baseUrl || window.location.href);
+      url.searchParams.set('scan', 'true');
+      url.searchParams.set('qr_id', label);
+      if (customMsg) {
+        url.searchParams.set('msg', customMsg);
+      }
+
+      const fullUrl = url.toString();
+      document.getElementById('qrFullUrlDisplay').value = fullUrl;
+      document.getElementById('btnTestQrLink').href = fullUrl;
+
+      // Generar el render del código QR
+      const container = document.getElementById('qrCodeContainer');
+      container.innerHTML = '';
+
+      qrInstance = new QRCode(container, {
+        text: fullUrl,
+        width: 190,
+        height: 190,
+        colorDark: colorDark,
+        colorLight: colorLight,
+        correctLevel: QRCode.CorrectLevel.H
+      });
+    }
+
+    function downloadQrImage() {
+      const container = document.getElementById('qrCodeContainer');
+      const img = container.querySelector('img');
+      const canvas = container.querySelector('canvas');
+      const label = document.getElementById('qrLabelInput').value.trim() || 'codigo-qr';
+
+      let dataUrl = '';
+      if (canvas) {
+        dataUrl = canvas.toDataURL('image/png');
+      } else if (img) {
+        dataUrl = img.src;
+      }
+
+      if (!dataUrl) {
+        alert('Error generando la imagen del código QR');
+        return;
+      }
+
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `QR_${label}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    function printQrCard() {
+      window.print();
+    }
+
+    function copyQrUrl() {
+      const copyText = document.getElementById('qrFullUrlDisplay');
+      copyText.select();
+      navigator.clipboard.writeText(copyText.value).then(() => {
+        alert('¡Enlace del código QR copiado al portapapeles!');
+      });
+    }
+
+    // ========================================================
+    // SECCIÓN 4: PROBAR ESCANEO DIRECTO (SIMULADOR)
+    // ========================================================
+    function testQuickScan() {
+      const testId = prompt('Ingresa un ID o nombre para este escaneo de prueba:', 'Prueba-En-Vivo');
+      if (!testId) return;
+
+      if (!navigator.geolocation) {
+        alert('Este navegador no soporta geolocalización.');
+        return;
+      }
+
+      const loadingAlert = confirm('Se solicitará tu ubicación real para simular un escaneo del QR. ¿Deseas continuar?');
+      if (!loadingAlert) return;
+
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lon = position.coords.longitude;
+          const acc = Math.round(position.coords.accuracy || 10);
+          
+          let address = `Lat: ${lat.toFixed(5)}, Lng: ${lon.toFixed(5)}`;
+          try {
+            const nomRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`, {
+              headers: { 'Accept-Language': 'es' }
+            });
+            const nomData = await nomRes.json();
+            if (nomData && nomData.display_name) address = nomData.display_name;
+          } catch(e) {}
+
+          const record = {
+            id: 'scan_' + Date.now(),
+            qrId: testId,
+            timestamp: new Date().toISOString(),
+            latitude: lat,
+            longitude: lon,
+            accuracy: acc,
+            accuracyType: 'GPS',
+            address: address,
+            device: parseDeviceInfo(navigator.userAgent),
+            userAgent: navigator.userAgent
+          };
+
+          await saveScanRecord(record);
+          await loadScansData();
+          renderGlobalMap();
+          updateStats();
+          renderHistoryTable();
+          populateQrFilters();
+          playNotificationChime();
+
+          alert(`¡Escaneo de prueba registrado exitosamente!\n\nLugar: ${address}\nPrecisión: ±${acc}m`);
+        },
+        (err) => {
+          alert('No se pudo obtener la ubicación: ' + err.message);
+        },
+        { enableHighAccuracy: true }
+      );
+    }
+
+    // ========================================================
+    // SECCIÓN 5: ALERTAS, WEBHOOKS Y NUBE
+    // ========================================================
+    function loadSettings() {
+      try {
+        const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        if (s.discordWebhook) document.getElementById('discordWebhookInput').value = s.discordWebhook;
+        if (s.discordEnabled !== undefined) document.getElementById('discordEnabledCheck').checked = s.discordEnabled;
+        if (s.telegramToken) document.getElementById('telegramTokenInput').value = s.telegramToken;
+        if (s.telegramChatId) document.getElementById('telegramChatIdInput').value = s.telegramChatId;
+        if (s.telegramEnabled !== undefined) document.getElementById('telegramEnabledCheck').checked = s.telegramEnabled;
+        if (s.supabaseUrl) document.getElementById('supabaseUrlInput').value = s.supabaseUrl;
+        if (s.supabaseKey) document.getElementById('supabaseKeyInput').value = s.supabaseKey;
+        if (s.soundEnabled !== undefined) document.getElementById('soundAlertEnabled').checked = s.soundEnabled;
+        if (s.autoRefresh !== undefined) document.getElementById('autoRefreshEnabled').checked = s.autoRefresh;
+      } catch(e) {}
+    }
+
+    function saveAllSettings() {
+      const s = {
+        discordWebhook: document.getElementById('discordWebhookInput').value.trim(),
+        discordEnabled: document.getElementById('discordEnabledCheck').checked,
+        telegramToken: document.getElementById('telegramTokenInput').value.trim(),
+        telegramChatId: document.getElementById('telegramChatIdInput').value.trim(),
+        telegramEnabled: document.getElementById('telegramEnabledCheck').checked,
+        supabaseUrl: document.getElementById('supabaseUrlInput').value.trim(),
+        supabaseKey: document.getElementById('supabaseKeyInput').value.trim(),
+        soundEnabled: document.getElementById('soundAlertEnabled').checked,
+        autoRefresh: document.getElementById('autoRefreshEnabled').checked
+      };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+      alert('¡Configuración guardada exitosamente!');
+      loadScansData().then(() => {
+        renderGlobalMap();
+        updateStats();
+        renderHistoryTable();
+      });
+    }
+
+    async function dispatchWebhookIfConfigured(record) {
+      try {
+        const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        const dateStr = new Date(record.timestamp).toLocaleString();
+
+        // 1. Enviar a Discord
+        if (s.discordEnabled && s.discordWebhook) {
+          const payload = {
+            content: `📍 **¡Nuevo escaneo de Código QR detectado!**`,
+            embeds: [{
+              title: `Escaneo: ${record.qrId || 'QR'}`,
+              color: 2450411,
+              fields: [
+                { name: "Dirección Detectada", value: record.address || "No disponible", inline: false },
+                { name: "Coordenadas", value: `\`${record.latitude.toFixed(5)}, ${record.longitude.toFixed(5)}\``, inline: true },
+                { name: "Precisión", value: `±${record.accuracy}m (${record.accuracyType})`, inline: true },
+                { name: "Dispositivo", value: `${record.device ? record.device.os : 'Móvil'} - ${record.device ? record.device.browser : ''}`, inline: true },
+                { name: "Fecha y Hora", value: dateStr, inline: true }
+              ],
+              url: `https://www.google.com/maps?q=${record.latitude},${record.longitude}`,
+              footer: { text: "QR GeoTracker Locator" }
+            }]
+          };
+
+          fetch(s.discordWebhook, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          }).catch(err => console.warn('Discord webhook error:', err));
+        }
+
+        // 2. Enviar a Telegram
+        if (s.telegramEnabled && s.telegramToken && s.telegramChatId) {
+          const text = `📍 *¡Nuevo escaneo de Código QR!*\n\n` +
+            `*ID:* ${record.qrId || 'QR'}\n` +
+            `*Lugar:* ${record.address || 'Ubicación'}\n` +
+            `*Coordenadas:* \`${record.latitude.toFixed(5)}, ${record.longitude.toFixed(5)}\`\n` +
+            `*Precisión:* ±${record.accuracy}m (${record.accuracyType})\n` +
+            `*Dispositivo:* ${record.device ? record.device.os : ''}\n` +
+            `*Fecha:* ${dateStr}\n\n` +
+            `🗺️ [Abrir en Google Maps](https://www.google.com/maps?q=${record.latitude},${record.longitude})`;
+
+          fetch(`https://api.telegram.org/bot${s.telegramToken}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: s.telegramChatId,
+              text: text,
+              parse_mode: 'Markdown'
+            })
+          }).catch(err => console.warn('Telegram send error:', err));
+        }
+      } catch(e) {
+        console.warn('Fallo al despachar alertas:', e);
+      }
+    }
+
+    async function testWebhookNotification() {
+      const webhookUrl = document.getElementById('discordWebhookInput').value.trim();
+      if (!webhookUrl) {
+        alert('Por favor ingresa la URL del Webhook de Discord primero.');
+        return;
+      }
+
+      try {
+        const testPayload = {
+          content: '🔔 **Notificación de Prueba - QR GeoTracker**\n¡La conexión con Discord está funcionando correctamente!'
+        };
+        const res = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(testPayload)
+        });
+        if (res.ok || res.status === 204) {
+          alert('¡Notificación de prueba enviada a Discord con éxito!');
+        } else {
+          alert('Error al enviar a Discord: Código ' + res.status);
+        }
+      } catch (err) {
+        alert('Error conectando con el Webhook: ' + err.message);
+      }
+    }
+
+    async function testTelegramNotification() {
+      const token = document.getElementById('telegramTokenInput').value.trim();
+      const chatId = document.getElementById('telegramChatIdInput').value.trim();
+
+      if (!token || !chatId) {
+        alert('Por favor ingresa el Bot Token y Chat ID de Telegram.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: '🔔 *Notificación de Prueba - QR GeoTracker*\n¡Tu bot de Telegram está listo para recibir alertas de escaneo en tiempo real!',
+            parse_mode: 'Markdown'
+          })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          alert('¡Mensaje de prueba enviado exitosamente a tu Telegram!');
+        } else {
+          alert('Error de Telegram: ' + (data.description || 'Token o Chat ID inválido'));
+        }
+      } catch (err) {
+        alert('Error comunicando con Telegram: ' + err.message);
+      }
+    }
+
+    function showSupabaseSqlHelper() {
+      const sql = `CREATE TABLE scans (
+  id TEXT PRIMARY KEY,
+  qr_id TEXT,
+  timestamp TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  accuracy INTEGER,
+  accuracy_type TEXT,
+  address TEXT,
+  device JSONB,
+  user_agent TEXT
+);
+ALTER TABLE scans ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permitir todo" ON scans FOR ALL USING (true) WITH CHECK (true);`;
+
+      navigator.clipboard.writeText(sql).then(() => {
+        alert("¡Código SQL copiado al portapapeles!\n\nPégalo en el SQL Editor de tu consola de Supabase para crear la tabla 'scans' en 5 segundos.");
+      }).catch(() => {
+        prompt("Copia este código SQL y pégalo en tu SQL Editor de Supabase:", sql);
+      });
+    }
+
+    // Timbre de notificación utilizando Web Audio API (sin archivos de audio externos)
+    function playNotificationChime() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+        osc.frequency.setValueAtTime(880.00, ctx.currentTime + 0.1); // A5
+
+        gain.gain.setValueAtTime(0.15, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.45);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+      } catch(e) {}
+    }
+
+    // Refresco automático periódico
+    function startAutoRefresh() {
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      autoRefreshTimer = setInterval(async () => {
+        const enabled = document.getElementById('autoRefreshEnabled').checked;
+        if (!enabled) return;
+
+        const prevLength = scansData.length;
+        await loadScansData();
+
+        if (scansData.length > prevLength) {
+          // Llegó un nuevo escaneo
+          if (document.getElementById('soundAlertEnabled').checked) {
+            playNotificationChime();
+          }
+          renderGlobalMap();
+          updateStats();
+          renderHistoryTable();
+          populateQrFilters();
+        }
+      }, 5000);
+    }
+
+    // ========================================================
+    // SECCIÓN 6: MODAL Y UTILIDADES
+    // ========================================================
+    function openScanModal(scanId) {
+      const scan = scansData.find(s => s.id === scanId);
+      if (!scan) return;
+
+      document.getElementById('modalScanTitle').innerText = `Escaneo: ${scan.qrId || 'QR'}`;
+      document.getElementById('modalScanSubtitle').innerText = new Date(scan.timestamp).toLocaleString();
+      document.getElementById('modalAddressText').innerText = scan.address || 'Ubicación sin dirección detallada';
+      document.getElementById('modalCoordsText').innerText = `${scan.latitude.toFixed(6)}, ${scan.longitude.toFixed(6)} (±${scan.accuracy}m)`;
+      document.getElementById('modalGoogleMapsLink').href = `https://www.google.com/maps?q=${scan.latitude},${scan.longitude}`;
+
+      document.getElementById('singleMapModal').classList.remove('hidden');
+
+      setTimeout(() => {
+        if (!modalMap) {
+          modalMap = L.map('modalMapContainer').setView([scan.latitude, scan.longitude], 16);
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap'
+          }).addTo(modalMap);
+        } else {
+          modalMap.setView([scan.latitude, scan.longitude], 16);
+          modalMap.eachLayer((layer) => {
+            if (layer instanceof L.Marker || layer instanceof L.Circle) {
+              modalMap.removeLayer(layer);
+            }
+          });
+        }
+
+        L.circle([scan.latitude, scan.longitude], {
+          radius: scan.accuracy || 15,
+          color: '#2563eb',
+          fillColor: '#3b82f6',
+          fillOpacity: 0.2
+        }).addTo(modalMap);
+
+        L.marker([scan.latitude, scan.longitude]).addTo(modalMap)
+          .bindPopup(escapeHtml(scan.address || ''))
+          .openPopup();
+
+        modalMap.invalidateSize();
+      }, 150);
+    }
+
+    function closeSingleMapModal() {
+      document.getElementById('singleMapModal').classList.add('hidden');
+    }
+
+    async function deleteSingleScan(scanId) {
+      if (!confirm('¿Deseas eliminar este registro de escaneo?')) return;
+
+      scansData = scansData.filter(s => s.id !== scanId);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(scansData));
+
+      try {
+        await fetch(`/api/scans?id=${scanId}`, { method: 'DELETE' });
+      } catch(e) {}
+
+      renderGlobalMap();
+      updateStats();
+      renderHistoryTable();
+      populateQrFilters();
+    }
+
+    async function clearHistoryConfirm() {
+      if (!confirm('¿Estás seguro de que deseas vaciar TODO el historial de escaneos? Esta acción no se puede deshacer.')) return;
+
+      scansData = [];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+
+      try {
+        await fetch('/api/scans', { method: 'DELETE' });
+      } catch(e) {}
+
+      renderGlobalMap();
+      updateStats();
+      renderHistoryTable();
+      populateQrFilters();
+    }
+
+    function exportToCsv() {
+      if (scansData.length === 0) {
+        alert('No hay registros para exportar.');
+        return;
+      }
+
+      let csv = 'ID,QR_ID,Fecha_Hora,Latitud,Longitud,Precision_Metros,Tipo_Precision,Direccion,Sistema_Operativo,Navegador\n';
+      scansData.forEach(s => {
+        const row = [
+          s.id,
+          `"${(s.qrId || '').replace(/"/g, '""')}"`,
+          `"${s.timestamp}"`,
+          s.latitude,
+          s.longitude,
+          s.accuracy,
+          s.accuracyType,
+          `"${(s.address || '').replace(/"/g, '""')}"`,
+          `"${s.device ? s.device.os : ''}"`,
+          `"${s.device ? s.device.browser : ''}"`
+        ];
+        csv += row.join(',') + '\n';
+      });
+
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `escaneos_qr_${Date.now()}.csv`;
+      a.click();
+    }
+
+    function exportToJson() {
+      if (scansData.length === 0) {
+        alert('No hay registros para exportar.');
+        return;
+      }
+      const blob = new Blob([JSON.stringify(scansData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `escaneos_qr_${Date.now()}.json`;
+      a.click();
+    }
+
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.nav-tab').forEach(el => {
+        el.classList.remove('border-blue-600', 'text-blue-600');
+        el.classList.add('border-transparent', 'text-slate-500');
+      });
+
+      document.getElementById(tabId).classList.remove('hidden');
+      const activeBtn = document.getElementById(`tabBtn-${tabId}`);
+      if (activeBtn) {
+        activeBtn.classList.remove('border-transparent', 'text-slate-500');
+        activeBtn.classList.add('border-blue-600', 'text-blue-600');
+      }
+
+      if (tabId === 'mapTab' && globalMap) {
+        setTimeout(() => globalMap.invalidateSize(), 100);
+      }
+    }
+
+    function parseDeviceInfo(ua) {
+      let os = 'Desconocido';
+      let browser = 'Navegador';
+
+      if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS (Apple)';
+      else if (/Android/i.test(ua)) os = 'Android';
+      else if (/Windows NT/i.test(ua)) os = 'Windows';
+      else if (/Macintosh/i.test(ua)) os = 'macOS';
+      else if (/Linux/i.test(ua)) os = 'Linux';
+
+      if (/Chrome/i.test(ua) && !/Edge|OPR/i.test(ua)) browser = 'Chrome';
+      else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
+      else if (/Firefox/i.test(ua)) browser = 'Firefox';
+      else if (/Edge/i.test(ua)) browser = 'Edge';
+
+      return { os, browser };
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  </script>
+</body>
+</html>
